@@ -1,0 +1,111 @@
+from pymoo.core.problem import ElementwiseProblem
+class Ramps(ElementwiseProblem):
+
+    def __init__(self):
+
+        super().__init__(n_var=4, n_obj=2, n_ieq_constr=1, xl=[10e-6, 10e-6, 5e-3, 5e-3], xu=[30e-3, 30e-3, 50e-3, 50e-3])
+        # 3 nvar, R1ramp, R2ramp, Driftspace
+        # n_obj, emittance, beta_x, gamma spread
+        #  drift>R1ramp+R2ramp
+    
+
+    def _evaluate(self, x, out, *args, **kwargs):
+        Objectives=self.propag(x)
+        out["F"] =np.array(Objectives) #R1, R2, Drift)
+        out["G"] = (x[0]+x[1])-x[2]
+
+    def density_profile(self, s):
+        # drift=100e-3
+        r1top=5e-3
+        r2top=r1top+self.drift
+        middle=self.drift/2+r1top
+        n=density_profile2(s,r1top, r2top, self.r1, self.r2, self.dist2)+density_profile1(s,r1top, r2top,self.r1, self.r2, self.dist1, self.dist2)
+        
+        return n
+
+    def propag(self, x):
+
+        # Design Variables Assingment
+        self.r1=x[0]
+        self.r2=x[1]
+        self.dist1=x[2]
+        self.dist2=x[3]
+        self.drift=self.dist1+self.dist2
+        r1top=5e-3
+        R2top=r1top+self.drift
+        # print(x*1e3)
+        if 1==1:
+            # Beam initial Parameters
+            s_t = 5.  # fs
+            gamma_avg = 300 / 0.511
+            gamma=gamma_avg
+            gamma_spread = 1.  # %
+            q_bunch = 30  # pC
+            xi_avg = 0.  # m
+            n_part = 1e4    
+            beta_x=kb(self.density_profile(1e-3), gamma_avg)**-1
+            
+            # Beam parameters.
+            emitt_nx = emitt_ny = 3e-6  # m
+            
+            # print(np.sqrt(emitt_nx*beta_x/np.pi))
+            beta_rel=betaRel(gamma_avg)
+            emitt=emitt_nx/(beta_rel*gamma)
+            s_x = s_y = np.sqrt(emitt*beta_x)
+            bunch = get_gaussian_bunch_from_size(
+                emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
+                q_bunch, n_part, name='elec_bunch')
+            # bunch = get_gaussian_bunch_from_size(
+            #     emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
+            #     q_bunch, n_part, name='elec_bunch')
+    
+            # PLasma target definition - including defining density profile
+            L_plasma=5e-3+self.drift+20e-3
+            plasma_target = PlasmaStage(
+            length=L_plasma, density=self.density_profile, wakefield_model='focusing_blowout', # wakefield_model='quasistatic_2d',
+            n_out=500)
+            
+            # Propagate through target
+            bunch_list=plasma_target.track(bunch)
+    
+            # Get Data 
+            params_evolution = analyze_bunch_list(bunch_list)
+            z = params_evolution['prop_dist'] * 1e3
+            emit=params_evolution['emitt_x']
+            bmSz=1e6*np.sqrt(params_evolution['beta_x']*params_evolution['emitt_x'])
+            zs=[bmSz[i] for i in range(len(z)) if z[i]>R2top*1e3]
+            es=[emit[i] for i in range(len(z)) if z[i]>R2top*1e3]
+            zr=[z[i] for i in range(len(z)) if z[i]>R2top*1e3]
+            
+            gSpread=params_evolution['rel_ene_spread']*100
+            fig, ax = plt.subplots()
+            ax.plot(z, params_evolution['beta_x']*1e3, c='r')
+            ax.tick_params(axis='x', which='both',labelbottom=True)
+            # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
+            ax.set_xlabel("z [mm]",fontsize=15)
+            ax.set_ylabel("Beta_x", c='r',fontsize=15 )
+            plt.tight_layout()
+            ax2=ax.twinx()
+            ax2.plot(z, params_evolution['emitt_x']*1e3, c='r')
+            ax2.tick_params(axis='x', which='both',labelbottom=True)
+            # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
+            ax2.set_xlabel("z [mm]",fontsize=15)
+            ax2.set_ylabel("Emitt_x", c='r',fontsize=15 )
+            plt.tight_layout()
+            fig_2 = plt.figure()
+            
+            plt.show()
+            plt.plot(z, self.density_profile(z*1e-3), c='r')
+            plt.show()
+            # Assign Data 
+            # print(np.mean(zs), np.min(zs), np.max(zs), (np.max(zs)-np.min(zs))/2)
+            # mns.append(np.mean(zs[0:10]))
+            # mins.append(zs[0])
+            # min.append(np.min(zs))
+            # print(np.mean(zs))
+            al=[max(emit),np.mean(zs)] # , gSpread[-1]]
+            
+            print(al)
+        # n_obj, emittance, beta_x, gamma spread
+        return al
+        
