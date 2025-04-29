@@ -1,4 +1,5 @@
 from pymoo.core.problem import ElementwiseProblem
+
 class Ramps(ElementwiseProblem):
 
     def __init__(self):
@@ -13,13 +14,49 @@ class Ramps(ElementwiseProblem):
         Objectives=self.propag(x)
         out["F"] =np.array(Objectives) #R1, R2, Drift)
         out["G"] = (x[0]+x[1])-x[2]
+        
+    def density_profile1(self, s,R1top, R2top, ramp1, ramp2, dist1, dist2): #, r1, r2, R1top, R2top):
+        """ Define plasma density as a function of ``z``. """
+        # Allocate relative density array.
+        # n = np.ones_like(s)
+        # Add upramp.
+        # n = np.where(s > R1top,0, 1) 
+        n = np.where((s <= R1top), 1, 0) 
+        n = np.where((s >= R1top) & (s <= R1top+dist1) , np.exp(1)**(-(s-R1top)/((ramp1))), n)
+        n = np.where( (s <= R2top-dist2+1e-6) & (s >= R2top-dist2-1e-6), 0, n)
+        # n = np.where((s > R1top+ramp1) & (s < R2top), np.exp(1)**(-(R2top-s)/(ramp2)), n)
+        # L_plasma1=R1top+(ramp1+drift/2)
+        return n * 1e24
+    def wp(self, n):
+        return np.sqrt((n*sc.e**2)/(sc.epsilon_0*sc.m_e))
+    
+    def kS(self, n):
+        gamma1=300
+        return self.wp(n)**2/(2*sc.c**2*gamma1)
+     
+    def kb(self, n, gamma): #CHANGE DENSITY PROFILE HERE
+        k=self.kS(n)
+        return np.sqrt(k)
+    def betaRel(self, gamma):
+        return np.sqrt(1-1/(gamma**2))
+
+    def density_profile2(self, s,R1top, R2top, ramp1, ramp2, dist2): #, ramp1, ramp2, R1top, R2top):
+        """ Define plasma density as a function of ``z``. """
+        # Allocate relative density array.
+        
+        # n = np.ones_like(s)*0.5
+        # Add upramp.
+        n = np.where((s >= R2top), 1, 0) 
+        n = np.where( (s <= R2top) & (s >= R2top-dist2), np.exp(1)**(-(R2top-s)/(ramp2)), n)
+        n = np.where( (s <= R2top-dist2+1e-6) & (s >= R2top-dist2-1e-6), 0, n)
+        return n * 1e24
 
     def density_profile(self, s):
         # drift=100e-3
         r1top=5e-3
         r2top=r1top+self.drift
         middle=self.drift/2+r1top
-        n=density_profile2(s,r1top, r2top, self.r1, self.r2, self.dist2)+density_profile1(s,r1top, r2top,self.r1, self.r2, self.dist1, self.dist2)
+        n=self.density_profile2(s,r1top, r2top, self.r1, self.r2, self.dist2)+self.density_profile1(s,r1top, r2top,self.r1, self.r2, self.dist1, self.dist2)
         
         return n
 
@@ -33,79 +70,73 @@ class Ramps(ElementwiseProblem):
         self.drift=self.dist1+self.dist2
         r1top=5e-3
         R2top=r1top+self.drift
-        # print(x*1e3)
-        if 1==1:
-            # Beam initial Parameters
-            s_t = 5.  # fs
-            gamma_avg = 300 / 0.511
-            gamma=gamma_avg
-            gamma_spread = 1.  # %
-            q_bunch = 30  # pC
-            xi_avg = 0.  # m
-            n_part = 1e4    
-            beta_x=kb(self.density_profile(1e-3), gamma_avg)**-1
-            
-            # Beam parameters.
-            emitt_nx = emitt_ny = 3e-6  # m
-            
-            # print(np.sqrt(emitt_nx*beta_x/np.pi))
-            beta_rel=betaRel(gamma_avg)
-            emitt=emitt_nx/(beta_rel*gamma)
-            s_x = s_y = np.sqrt(emitt*beta_x)
-            bunch = get_gaussian_bunch_from_size(
-                emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
-                q_bunch, n_part, name='elec_bunch')
-            # bunch = get_gaussian_bunch_from_size(
-            #     emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
-            #     q_bunch, n_part, name='elec_bunch')
-    
-            # PLasma target definition - including defining density profile
-            L_plasma=5e-3+self.drift+20e-3
-            plasma_target = PlasmaStage(
-            length=L_plasma, density=self.density_profile, wakefield_model='focusing_blowout', # wakefield_model='quasistatic_2d',
-            n_out=500)
-            
-            # Propagate through target
-            bunch_list=plasma_target.track(bunch)
-    
-            # Get Data 
-            params_evolution = analyze_bunch_list(bunch_list)
-            z = params_evolution['prop_dist'] * 1e3
-            emit=params_evolution['emitt_x']
-            bmSz=1e6*np.sqrt(params_evolution['beta_x']*params_evolution['emitt_x'])
-            zs=[bmSz[i] for i in range(len(z)) if z[i]>R2top*1e3]
-            es=[emit[i] for i in range(len(z)) if z[i]>R2top*1e3]
-            zr=[z[i] for i in range(len(z)) if z[i]>R2top*1e3]
-            
-            gSpread=params_evolution['rel_ene_spread']*100
-            fig, ax = plt.subplots()
-            ax.plot(z, params_evolution['beta_x']*1e3, c='r')
-            ax.tick_params(axis='x', which='both',labelbottom=True)
-            # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
-            ax.set_xlabel("z [mm]",fontsize=15)
-            ax.set_ylabel("Beta_x", c='r',fontsize=15 )
-            plt.tight_layout()
-            ax2=ax.twinx()
-            ax2.plot(z, params_evolution['emitt_x']*1e3, c='r')
-            ax2.tick_params(axis='x', which='both',labelbottom=True)
-            # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
-            ax2.set_xlabel("z [mm]",fontsize=15)
-            ax2.set_ylabel("Emitt_x", c='r',fontsize=15 )
-            plt.tight_layout()
-            fig_2 = plt.figure()
-            
-            plt.show()
-            plt.plot(z, self.density_profile(z*1e-3), c='r')
-            plt.show()
-            # Assign Data 
-            # print(np.mean(zs), np.min(zs), np.max(zs), (np.max(zs)-np.min(zs))/2)
-            # mns.append(np.mean(zs[0:10]))
-            # mins.append(zs[0])
-            # min.append(np.min(zs))
-            # print(np.mean(zs))
-            al=[max(emit),np.mean(zs)] # , gSpread[-1]]
-            
-            print(al)
-        # n_obj, emittance, beta_x, gamma spread
+
+        # Beam initial Parameters
+        s_t = 5.  # fs
+        gamma_avg = 300 / 0.511
+        gamma=gamma_avg
+        gamma_spread = 1.  # %
+        q_bunch = 30  # pC
+        xi_avg = 0.  # m
+        n_part = 1e4    
+        beta_x=self.kb(self.density_profile(1e-3), gamma_avg)**-1
+        
+        # Beam parameters.
+        emitt_nx = emitt_ny = 3e-6  # m
+        
+        # print(np.sqrt(emitt_nx*beta_x/np.pi))
+        beta_rel=self.betaRel(gamma_avg)
+        emitt=emitt_nx/(beta_rel*gamma)
+        s_x = s_y = np.sqrt(emitt*beta_x)
+        bunch = get_gaussian_bunch_from_size(
+            emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
+            q_bunch, n_part, name='elec_bunch')
+        # bunch = get_gaussian_bunch_from_size(
+        #     emitt_nx, emitt_ny, s_x, s_y, gamma_avg, gamma_spread, s_t, xi_avg,
+        #     q_bunch, n_part, name='elec_bunch')
+
+        # PLasma target definition - including defining density profile
+        L_plasma=5e-3+self.drift+20e-3
+        plasma_target = PlasmaStage(
+        length=L_plasma, density=self.density_profile, wakefield_model='focusing_blowout', # wakefield_model='quasistatic_2d',
+        n_out=500)
+        
+        # Propagate through target
+        bunch_list=plasma_target.track(bunch)
+
+        # Get Data 
+        params_evolution = analyze_bunch_list(bunch_list)
+        z = params_evolution['prop_dist'] * 1e3
+        emit=params_evolution['emitt_x']
+        bmSz=1e6*np.sqrt(params_evolution['beta_x']*params_evolution['emitt_x'])
+        zs=[bmSz[i] for i in range(len(z)) if z[i]>R2top*1e3]
+        es=[emit[i] for i in range(len(z)) if z[i]>R2top*1e3]
+        zr=[z[i] for i in range(len(z)) if z[i]>R2top*1e3]
+        
+        gSpread=params_evolution['rel_ene_spread']*100
+        fig, ax = plt.subplots()
+        ax.plot(z, params_evolution['beta_x']*1e3, c='r')
+        ax.tick_params(axis='x', which='both',labelbottom=True)
+        # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
+        ax.set_xlabel("z [mm]",fontsize=15)
+        ax.set_ylabel("Beta_x", c='r',fontsize=15 )
+        plt.tight_layout()
+        ax2=ax.twinx()
+        ax2.plot(z, params_evolution['emitt_x']*1e3, c='r')
+        ax2.tick_params(axis='x', which='both',labelbottom=True)
+        # plt.ylabel("$\\frac{\\Delta \\gamma}{\\gamma}$ [%]")
+        ax2.set_xlabel("z [mm]",fontsize=15)
+        ax2.set_ylabel("Emitt_x", c='r',fontsize=15 )
+        plt.tight_layout()
+        fig_2 = plt.figure()
+        
+        plt.show()
+        plt.plot(z, self.density_profile(z*1e-3), c='r')
+        plt.show()
+
+        al=[max(emit),np.mean(zs)] # , gSpread[-1]]
+        
+        print(al)
+        
         return al
         
